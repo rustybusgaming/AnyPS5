@@ -1458,7 +1458,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         auto& surface = validatedTextures[i];
         if (!surface.valid) return fail(FastFail::NoRecord);
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource.baseAddress, textures[i].get())) return fail(FastFail::Depth);
+            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
         }
         const auto address = surface.resource.baseAddress;
@@ -1580,7 +1580,7 @@ bool ShaderResources::fastRevalidateEach() {
         auto& surface = validatedTextures[i];
         if (!surface.valid) return false;
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource.baseAddress, textures[i].get())) return false;
+            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
             continue;
         }
         const auto address = surface.resource.baseAddress;
