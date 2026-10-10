@@ -20,6 +20,17 @@
 
 namespace AgcDriver::DriverDetail {
 
+std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnostics(const ShaderRecompiler::RecompileRequest& request) {
+    try {
+        return ShaderRecompiler::PrepareShader(request);
+    } catch (...) {
+        try {
+            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) static_cast<void>(Driver::dumpRequest(request.shader.codeAddress, request));
+        } catch (...) {}
+        throw;
+    }
+}
+
 std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address) {
     GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
@@ -204,7 +215,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
         if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
     }
     if (PreparedAtUse(snapshot, request)) {
-        auto handle = ShaderRecompiler::PrepareShader(request);
+        auto handle = PrepareShaderWithDiagnostics(request);
         snapshot.prepared->entries.push_back({codeOffset, handle});
         return handle;
     }
@@ -254,7 +265,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
     }
     if (PreparedAtUse(snapshot, request)) {
-        auto handle = ShaderRecompiler::PrepareShader(request);
+        auto handle = PrepareShaderWithDiagnostics(request);
         invocationRequest = request;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
         auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
@@ -414,7 +425,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     std::vector<PreparedShaders::Entry> entries;
     const auto append = [&] {
         PerformanceTimer timing("Shader.PrepareArtifact");
-        entries.push_back({codeOffset, ShaderRecompiler::PrepareShader(request)});
+        entries.push_back({codeOffset, PrepareShaderWithDiagnostics(request)});
     };
     append();
     if (compute) {
@@ -473,7 +484,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         }
         if (handle == nullptr) {
             PerformanceTimer timing("Shader.PrepareArtifact");
-            handle = ShaderRecompiler::PrepareShader(request);
+            handle = PrepareShaderWithDiagnostics(request);
         }
         const auto bytes = handle->artifact->bindings.pushConstantSizeBytes;
         require(bytes <= capacity - pushOffset, "prepared graphics stages exceed the push constant block");
