@@ -1032,6 +1032,8 @@ void TestPs5ExtendedInitLayout() {
     };
     run(false);
     run(true);
+}
+
 void TestHandedOutFramesStayIntact() {
     CheckHandedOutFramesStayIntact(6, 5);
     CheckHandedOutFramesStayIntact(2, 5);
