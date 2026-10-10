@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -49,6 +50,26 @@ void CheckWritingAttribute(const char* function, int attribute) {
     default:
         Unsupported(function, "unknown attribute " + AttributeName(attribute) + " (error code not verified)");
     }
+}
+
+constexpr int LANGUAGE_DEFAULT = 0x0000;
+constexpr int SCRIPTS[] = {0x0100, 0x0600, 0x3000};
+constexpr int LANGUAGES[] = {
+    0x0100, 0x0101, 0x0102, 0x0103, 0x0104, 0x0105,
+    0x0600, 0x0601, 0x0602,
+    0x3000, 0x3011, 0x3021, 0x3022, 0x3023, 0x3041,
+};
+
+std::size_t ScriptIndex(const char* function, int script) {
+    const auto found = std::find(std::begin(SCRIPTS), std::end(SCRIPTS), script);
+    if (found == std::end(SCRIPTS)) Unsupported(function, "script " + AttributeName(script) + " is not modelled");
+    return static_cast<std::size_t>(found - std::begin(SCRIPTS));
+}
+
+void CheckLanguage(const char* function, int script, int language) {
+    if (language == LANGUAGE_DEFAULT) return;
+    if ((language & 0xFF00) == script && std::find(std::begin(LANGUAGES), std::end(LANGUAGES), language) != std::end(LANGUAGES)) return;
+    Unsupported(function, "language " + AttributeName(language) + " for script " + AttributeName(script) + " is not modelled");
 }
 
 int WritingAttribute(const FontHandleNative* font) {
@@ -227,6 +248,46 @@ int APS5_VABI sceFontGetAttribute(FontHandle fontHandle, int attribute, int* now
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
     *nowAttribute = WritingAttribute(font);
+    ReleaseFontLock(font, fontLock);
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontSetScriptLanguage(FontHandle fontHandle, int fontScript, int fontLanguage) {
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    const std::size_t scriptIndex = ScriptIndex(__func__, fontScript);
+    CheckLanguage(__func__, fontScript, fontLanguage);
+    if (!AcquireFontLock(font, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    FontState* state = TryGetState(fontHandle);
+    if (!state) {
+        ReleaseFontLock(font, fontLock);
+        Unsupported(__func__, "font handle without library state");
+    }
+    state->scriptLanguages[scriptIndex] = fontLanguage;
+    ReleaseFontLock(font, fontLock);
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontGetScriptLanguage(FontHandle fontHandle, int fontScript, int* fontLanguage) {
+    if (!fontLanguage) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC) {
+        *fontLanguage = LANGUAGE_DEFAULT;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    const std::size_t scriptIndex = ScriptIndex(__func__, fontScript);
+    if (!AcquireFontLock(font, fontLock)) {
+        *fontLanguage = LANGUAGE_DEFAULT;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    const FontState* state = TryGetState(fontHandle);
+    if (!state) {
+        ReleaseFontLock(font, fontLock);
+        Unsupported(__func__, "font handle without library state");
+    }
+    *fontLanguage = state->scriptLanguages[scriptIndex];
     ReleaseFontLock(font, fontLock);
     return SCE_FONT_OK;
 }

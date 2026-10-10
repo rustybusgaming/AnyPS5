@@ -4,6 +4,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEFONT_INCLUDE_FONTINTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCEFONT_INCLUDE_FONTINTERNAL_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -28,6 +29,7 @@ struct FontState {
     FT_Face face = nullptr;
     float scaleW = 16.0f;
     float scaleH = 16.0f;
+    std::array<int, 3> scriptLanguages{};
 
     FontState() = default;
     FontState(const FontState&) = delete;
