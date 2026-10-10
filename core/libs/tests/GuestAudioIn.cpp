@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,19 @@ void TestNoDevice() {
     SetEnvironment("SDL_AUDIODRIVER", "none");
 
     TestValidation();
+    const int hq = sceAudioInHqOpen(user, 0, 0, 128, 48000, 2);
+    Require(hq > 0 && sceAudioInGetSilentState(hq) == 1);
+    std::vector<std::int16_t> hqBlock(128 * 2, 0x5555);
+    Require(sceAudioInInput(hq, hqBlock.data()) == 128);
+    for (const auto sample : hqBlock) Require(sample == 0);
+    Require(sceAudioInClose(hq) == 0);
+    bool hqUnsupported = false;
+    try {
+        sceAudioInHqOpen(user, 0, 0, 256, 48000, 2);
+    } catch (const std::runtime_error&) {
+        hqUnsupported = true;
+    }
+    Require(hqUnsupported);
     const int handle = sceAudioInOpen(user, 0, 0, 256, 16000, 0x12);
     Require(handle > 0 && sceAudioInGetSilentState(handle) == 1);
     Require(sceAudioInGetSilentState(handle + 1) == invalidHandle);
