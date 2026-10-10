@@ -265,6 +265,7 @@ Throughout the project, every function at every stage either **does exactly what
 - [sceHttpWaitRequest](../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - the timeout is assumed to be in microseconds and a negative timeout to wait without limit; the invalid-value error for a null handle or event array or a non-positive event count is assumed, not measured. No request is ever pending, so the call waits for the timeout and returns 0 events, and a wait without limit throws
 
 - [gethostbyname](../../core/libs/prx/libScePosixForWebKit/Resolver.cpp) (libScePosixForWebKit) - numeric IPv4 forms, trailing whitespace and 64-bit accumulation follow FreeBSD 11.4 [inet_aton](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/inet/inet_addr.c); clearing the resolver error on numeric success follows [fakeaddr](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/net/gethostnamadr.c). Exact PS5 behavior is unverified; hostname lookup still uses the host resolver
+- [sched_get_priority_max, sched_get_priority_min](../../core/libs/prx/libkernel/System/src/Process.cpp) (libkernel) - `SCHED_OTHER` (2) reports the same 256 to 767 range as `SCHED_FIFO` and `SCHED_RR`; the console's answer is unverified. FreeBSD accepts `SCHED_OTHER` with its own range, and shadPS4 rejects it with `EINVAL`. `pthread_setschedparam` ignores the policy, so a priority taken from this range applies
 
 ### Functional
 
