@@ -12,6 +12,8 @@ int APS5_VABI libc_printf_nid_postfix(const char*, ...);
 int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
 int APS5_VABI vsnprintf_nid_postfix(char*, size_t, const char*, VaList*);
 int APS5_VABI vprintf_nid_postfix(const char*, VaList*);
+int APS5_VABI vsnprintf_s_nid_postfix(char*, size_t, const char*, VaList*);
+int APS5_VABI vsscanf_s_nid_postfix(const char*, const char*, VaList*);
 }
 
 static void Require(bool condition) {
@@ -28,6 +30,51 @@ static int APS5_VABI FormatList(char* buffer, size_t size, const char* format, .
     Require(std::memcmp(&list, &original, sizeof(list)) == 0);
     __builtin_sysv_va_end(args);
     return result;
+}
+
+static int APS5_VABI SecureFormatList(char* buffer, size_t size, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    VaList list;
+    std::memcpy(&list, args, sizeof(list));
+    const int result = vsnprintf_s_nid_postfix(buffer, size, format, &list);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+static int APS5_VABI SecureScanList(const char* input, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    VaList list;
+    std::memcpy(&list, args, sizeof(list));
+    const int result = vsscanf_s_nid_postfix(input, format, &list);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+static void CheckSecureLists() {
+    char output[16];
+    Require(SecureFormatList(output, sizeof(output), "%s=%d %.2f %*d", "x", 42, 1.5, 3, 7) == 13 && std::strcmp(output, "x=42 1.50   7") == 0);
+    Require(SecureFormatList(output, 4, "%s", "truncated") == 9 && std::strcmp(output, "tru") == 0);
+    std::memset(output, '!', sizeof(output));
+    Require(SecureFormatList(output, sizeof(output), "%d %s", 1, static_cast<const char*>(nullptr)) < 0 && output[0] == 0 && output[1] == '!');
+    int count = 0;
+    std::memset(output, '!', sizeof(output));
+    Require(SecureFormatList(output, sizeof(output), "ab%n", &count) < 0 && output[0] == 0 && count == 0);
+    std::memset(output, '!', sizeof(output));
+    Require(SecureFormatList(output, 0, "abc") < 0 && output[0] == '!');
+    Require(SecureFormatList(nullptr, sizeof(output), "abc") < 0);
+    Require(SecureFormatList(output, sizeof(output), nullptr) < 0 && output[0] == 0);
+    Require(SecureFormatList(output, sizeof(output), "%Lf|%ls", 2.5L, u"w") == 10 && std::strcmp(output, "2.500000|w") == 0);
+    Require(SecureFormatList(output, sizeof(output), "100%%") == 4 && std::strcmp(output, "100%") == 0);
+
+    int number = 0;
+    char word[4] = {'?', '?', '?', '?'};
+    char letter = 0;
+    Require(SecureScanList("17 abc z", "%d %s %c", &number, word, 4u, &letter, 1u) == 3);
+    Require(number == 17 && std::strcmp(word, "abc") == 0 && letter == 'z');
+    Require(SecureScanList("abcdef", "%s", word, 4u) == 0 && word[0] == 0);
+    Require(SecureScanList("", "%d", &number) == -1);
 }
 
 static int APS5_VABI PrintList(const char* format, ...) {
@@ -140,4 +187,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     std::puts("Formatting checks passed: 10000 iterations");
 }
 
-int main() { RunChecks(); return CheckWidePrecision() ? 0 : 1; }
+int main() {
+    RunChecks();
+    CheckSecureLists();
+    return CheckWidePrecision() ? 0 : 1;
+}

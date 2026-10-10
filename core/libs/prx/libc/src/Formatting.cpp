@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <memory>
+#include <stdexcept>
 
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -151,6 +152,46 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
         if (!suppress) ++assigned;
     }
     return finish(assigned);
+}
+
+bool SecureFormatArguments(const char* format, const VaList* args) {
+    if (args == nullptr) throw std::invalid_argument("vsnprintf_s: null argument list");
+    LibcDetail::FormatArguments arguments(args);
+    for (const char* cursor = format; *cursor != '\0'; ++cursor) {
+        if (*cursor != '%') continue;
+        if (*++cursor == '%') continue;
+        while (*cursor != '\0' && std::strchr("-+ #0'", *cursor) != nullptr) ++cursor;
+        if (*cursor == '*') {
+            arguments.Next<int>();
+            ++cursor;
+        }
+        while (std::isdigit(static_cast<unsigned char>(*cursor))) ++cursor;
+        if (*cursor == '$') throw std::invalid_argument("vsnprintf_s: positional arguments are not supported");
+        if (*cursor == '.') {
+            ++cursor;
+            if (*cursor == '*') {
+                arguments.Next<int>();
+                ++cursor;
+            }
+            while (std::isdigit(static_cast<unsigned char>(*cursor))) ++cursor;
+        }
+        const bool longDouble = *cursor == 'L';
+        while (*cursor != '\0' && std::strchr("hljztLq", *cursor) != nullptr) ++cursor;
+        const char conversion = *cursor;
+        if (conversion == '\0') throw std::invalid_argument("vsnprintf_s: the format ends inside a conversion");
+        if (conversion == 'n') return false;
+        if (conversion == 's' || conversion == 'S') {
+            if (arguments.Next<const void*>() == nullptr) return false;
+        } else if (std::strchr("aAeEfFgG", conversion) != nullptr) {
+            if (longDouble) arguments.Next<long double>();
+            else arguments.Next<double>();
+        } else if (std::strchr("diouxXcCp", conversion) != nullptr) {
+            arguments.Next<std::uint64_t>();
+        } else {
+            throw std::invalid_argument(std::string("vsnprintf_s: unsupported conversion '") + conversion + "'");
+        }
+    }
+    return true;
 }
 
 }
@@ -420,6 +461,21 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
     va_end(copy);
     return result;
 #endif
+}
+
+int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
+    constexpr size_t RsizeMax = SIZE_MAX >> 1;
+    const bool writable = buffer != nullptr && size != 0 && size <= RsizeMax;
+    int result = -1;
+    if (writable && format != nullptr && SecureFormatArguments(format, args)) result = vsnprintf_nid_postfix(buffer, size, format, args);
+    if (result < 0 && writable) buffer[0] = '\0';
+    return result;
+}
+
+int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaList* args) {
+    if (args == nullptr) throw std::invalid_argument("vsscanf_s: null argument list");
+    LibcDetail::FormatArguments arguments(args);
+    return ScanGuest(buffer, format, true, [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<unsigned int>(); });
 }
 
 #ifdef _WIN32
