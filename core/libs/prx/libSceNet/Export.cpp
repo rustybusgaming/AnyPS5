@@ -30,6 +30,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
@@ -39,6 +40,7 @@
 namespace {
 // FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
+constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
 constexpr int NET_EACCES = 13;
 constexpr int NET_EFAULT = 14;
@@ -289,7 +291,14 @@ struct NetMemoryPoolStats {
     std::size_t max_inuse_size;
     std::size_t current_inuse_size;
 };
-std::map<int, int> g_resolvers;
+struct Resolver {
+    int error = 0;
+    int running = 0;
+    std::uint64_t aborts = 0;
+    bool preserveNtoaAbort = false;
+    bool preserveAtonAbort = false;
+};
+std::map<int, Resolver> g_resolvers;
 int g_next_sock = 32;
 int g_next_epoll = 0x4000;
 int g_next_pool = 1;
@@ -309,7 +318,7 @@ int fail(int err) {
 void set_resolver_error(int rid, int error) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
-    if (resolver != g_resolvers.end()) resolver->second = error;
+    if (resolver != g_resolvers.end()) resolver->second.error = error;
 }
 
 void log_soft(const char* func, const char* what) {
@@ -1131,7 +1140,7 @@ int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)flags;
     std::lock_guard lk(g_mutex);
     const int id = g_next_resolver++;
-    g_resolvers[id] = 0;
+    g_resolvers[id] = {};
     return id;
 }
 
@@ -1140,16 +1149,52 @@ int APS5_VABI sceNetResolverDestroy(int rid) {
     return g_resolvers.erase(rid) != 0 ? 0 : fail(NET_EBADF);
 }
 
-int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std::uint32_t>& addresses) {
+enum class ResolverLookup { Ntoa, Aton };
+
+int begin_lookup(int rid, ResolverLookup kind, std::uint64_t& aborts) {
     {
         std::lock_guard lk(g_mutex);
-        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
+        const auto resolver = g_resolvers.find(rid);
+        if (resolver == g_resolvers.end()) return fail(NET_EBADF);
+        auto& preserved = kind == ResolverLookup::Ntoa ? resolver->second.preserveNtoaAbort : resolver->second.preserveAtonAbort;
+        if (!std::exchange(preserved, false)) {
+            ++resolver->second.running;
+            aborts = resolver->second.aborts;
+            return 0;
+        }
     }
-    if (!initialize_sockets()) return fail(5);
+    set_resolver_error(rid, NET_ERROR_BASE | NET_EINTR);
+    return fail(NET_EINTR);
+}
+
+bool end_lookup(int rid, std::uint64_t aborts) {
+    std::lock_guard lk(g_mutex);
+    const auto resolver = g_resolvers.find(rid);
+    if (resolver == g_resolvers.end()) return false;
+    --resolver->second.running;
+    return resolver->second.aborts != aborts;
+}
+
+int aborted_lookup(int rid) {
+    set_resolver_error(rid, NET_ERROR_BASE | NET_EINTR);
+    return fail(NET_EINTR);
+}
+
+int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std::uint32_t>& addresses) {
+    std::uint64_t aborts = 0;
+    if (const int error = begin_lookup(rid, ResolverLookup::Ntoa, aborts)) return error;
+    if (!initialize_sockets()) {
+        end_lookup(rid, aborts);
+        return fail(5);
+    }
     addrinfo hints{};
     hints.ai_family = AF_INET;
     addrinfo* results = nullptr;
     const int result = ::getaddrinfo(hostname, nullptr, &hints, &results);
+    if (end_lookup(rid, aborts)) {
+        if (result == 0) ::freeaddrinfo(results);
+        return aborted_lookup(rid);
+    }
     if (result != 0) {
         *errno_slot() = result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT;
         log_soft(func, "host DNS lookup failed");
@@ -1215,16 +1260,18 @@ int APS5_VABI sceNetResolverStartAton(int rid, const void* addr, char* hostname,
     (void)retry;
     (void)flags;
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
-    {
-        std::lock_guard lk(g_mutex);
-        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
+    std::uint64_t aborts = 0;
+    if (const int error = begin_lookup(rid, ResolverLookup::Aton, aborts)) return error;
+    if (!initialize_sockets()) {
+        end_lookup(rid, aborts);
+        return fail(5);
     }
-    if (!initialize_sockets()) return fail(5);
     sockaddr_in address{};
     address.sin_family = AF_INET;
     std::memcpy(&address.sin_addr, addr, sizeof(address.sin_addr));
     const int result = ::getnameinfo(reinterpret_cast<const sockaddr*>(&address), sizeof(address), hostname,
         static_cast<NativeLength>(len), nullptr, 0, NI_NAMEREQD);
+    if (end_lookup(rid, aborts)) return aborted_lookup(rid);
     if (result != 0) {
         *errno_slot() = result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT;
         log_soft(__func__, "host reverse DNS lookup failed");
@@ -1240,18 +1287,28 @@ int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
-    *status = resolver->second;
+    *status = resolver->second.error;
     return 0;
 }
 
-int APS5_VABI sceNetResolverAbort(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNetResolverAbort(int rid, int flags) {
+    constexpr int PreserveNtoa = 0x1;
+    constexpr int PreserveAton = 0x2;
+    if ((flags & ~(PreserveNtoa | PreserveAton)) != 0) throw std::invalid_argument("sceNetResolverAbort: unknown flags " + std::to_string(flags));
+    std::lock_guard lk(g_mutex);
+    const auto resolver = g_resolvers.find(rid);
+    if (resolver == g_resolvers.end()) return fail(NET_EBADF);
+    if (resolver->second.running != 0) {
+        ++resolver->second.aborts;
+        return 0;
+    }
+    if ((flags & PreserveNtoa) != 0) resolver->second.preserveNtoaAbort = true;
+    if ((flags & PreserveAton) != 0) resolver->second.preserveAtonAbort = true;
     return 0;
 }
 
-int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int rid, const char* hostname, NetResolverInfo* info, int timeout, int retry, int flags) {
+    return sceNetResolverStartNtoaMultipleRecordsEx(rid, hostname, info, timeout, retry, flags);
 }
 
 extern const std::uint8_t in6addr_any_nid_postfix[16] = {};
