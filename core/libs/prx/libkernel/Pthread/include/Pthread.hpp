@@ -129,6 +129,7 @@ struct PthreadPrivate {
     std::atomic<bool> cancelPending{false};
     std::mutex cancelLock;
     TimedWait::Condition* cancelWait = nullptr;
+    std::uint64_t cancelWaitSerial = 0;
 
     PthreadPrivate();
     ~PthreadPrivate();

@@ -23,6 +23,7 @@ int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
 int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
 int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
 int APS5_VABI scePthreadSemWait(PthreadSem* sem);
+int APS5_VABI scePthreadSemPost(PthreadSem* sem);
 int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
 int APS5_VABI pthread_cancel_nid_postfix(Pthread thread);
 int APS5_VABI pthread_setcanceltype_nid_postfix(int type, int* old_type);
@@ -125,6 +126,17 @@ static void* APS5_VABI Disabled(void*) {
     return nullptr;
 }
 
+static void* APS5_VABI DisabledSemWaiter(void*) {
+    Require(scePthreadSetcancelstate(CANCEL_DISABLE, nullptr) == SCE_OK);
+    shared.ready.store(true);
+    Require(scePthreadSemWait(&shared.sem) == SCE_OK);
+    shared.survived.store(true);
+    Require(scePthreadSetcancelstate(CANCEL_ENABLE, nullptr) == SCE_OK);
+    scePthreadTestcancel();
+    shared.returned.store(true);
+    return nullptr;
+}
+
 static void* APS5_VABI Asynchronous(void*) {
     int old = -1;
     Require(scePthreadSetcancelstate(CANCEL_DISABLE, nullptr) == SCE_OK);
@@ -213,6 +225,14 @@ int main() {
     Require(scePthreadCancel(thread) == SCE_OK);
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     shared.release.store(true);
+    JoinCanceled(thread);
+    Require(shared.survived.load());
+
+    shared.survived.store(false);
+    thread = Start(DisabledSemWaiter);
+    Require(scePthreadCancel(thread) == SCE_OK);
+    Require(!shared.survived.load());
+    Require(scePthreadSemPost(&shared.sem) == SCE_OK);
     JoinCanceled(thread);
     Require(shared.survived.load());
 

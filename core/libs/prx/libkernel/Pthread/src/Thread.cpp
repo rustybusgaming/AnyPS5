@@ -303,6 +303,7 @@ void ThreadCancel::BeginWait(TimedWait::Condition* condition) {
     if (!currentThread) return;
     std::lock_guard lock(currentThread->cancelLock);
     currentThread->cancelWait = condition;
+    if (condition) ++currentThread->cancelWaitSerial;
 }
 
 void ThreadCancel::EndWait() {
@@ -623,10 +624,12 @@ void APS5_VABI scePthreadYield() {
 int APS5_VABI scePthreadCancel(Pthread thread) {
     if (!thread) return SCE_KERNEL_ERROR_ESRCH;
     thread->cancelPending.store(true);
+    std::optional<std::uint64_t> notifiedWait;
     for (;;) {
         {
             std::lock_guard lock(thread->cancelLock);
-            if (!thread->cancelWait) return SCE_OK;
+            if (!thread->cancelWait || (notifiedWait && *notifiedWait != thread->cancelWaitSerial)) return SCE_OK;
+            notifiedWait = thread->cancelWaitSerial;
             thread->cancelWait->NotifyAll();
         }
         std::this_thread::yield();
