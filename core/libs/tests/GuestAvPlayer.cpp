@@ -1001,6 +1001,7 @@ void TestPs5ExtendedInitLayout() {
     constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
     constexpr std::int32_t Buffers = 3;
     constexpr int DecodeAheadBuffers = 4;
+    constexpr int HeldBuffers = 4;
     static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
     const auto run = [&](bool autoStart) {
         Events events;
@@ -1027,7 +1028,7 @@ void TestPs5ExtendedInitLayout() {
             Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
             Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
         }
-        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
+        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers + HeldBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
         Check(sceAvPlayerClose(player) == 0, "close after the PS5 extended init failed");
     };
     run(false);
