@@ -2,9 +2,11 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
 
 extern "C" {
 int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param);
@@ -24,7 +26,7 @@ static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001E);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-int main() {
+static int Run() {
     std::array<std::uint8_t, sizeof(VideoOutOutputOptions)> raw{};
     raw.fill(0xAA);
     VideoOutOutputOptions options{};
@@ -78,4 +80,15 @@ int main() {
     Require(sceVideoOutClose(handle) == 0);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
     LibcRunShutdown_nid_postfix();
+    return 0;
+}
+
+int main() {
+    try {
+        return Run();
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()).find("Vulkan support") == std::string_view::npos || std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        return 77;
+    }
 }
