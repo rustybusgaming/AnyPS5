@@ -8,6 +8,8 @@
 extern "C" {
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id);
 int APS5_VABI sceNpGetUserIdByAccountId(std::uint64_t account_id, int* user_id);
+void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata);
+int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction);
 }
 
 namespace {
@@ -38,5 +40,13 @@ int main() {
     Require(userId == 0x5a5a5a5a, "sceNpGetUserIdByAccountId must leave the user ID untouched");
     Require(sceNpGetUserIdByAccountId(0, &userId) == InvalidArgument, "sceNpGetUserIdByAccountId must reject account ID 0");
     Require(sceNpGetUserIdByAccountId(0x1234567890abcdefull, nullptr) == InvalidArgument, "sceNpGetUserIdByAccountId must reject a null user ID");
+
+    int userdata = 0;
+    sceNpRegisterGamePresenceCallback(reinterpret_cast<void*>(&Require), &userdata);
+    sceNpRegisterGamePresenceCallback(nullptr, nullptr);
+
+    NpContentRestriction restriction{};
+    Require(sceNpSetContentRestriction(&restriction) == 0, "sceNpSetContentRestriction must accept a restriction");
+    Require(sceNpSetContentRestriction(nullptr) == InvalidArgument, "sceNpSetContentRestriction must reject a null restriction");
     return 0;
 }
