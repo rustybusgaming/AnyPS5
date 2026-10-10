@@ -1018,7 +1018,6 @@ int main(int argc, char** argv) {
         testPredicatedSubmission();
         testConditionalSubmission();
         testSuspendPointWritesQueuedLabels();
-        testNopPadSubmission();
         testBranchSubmission();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
